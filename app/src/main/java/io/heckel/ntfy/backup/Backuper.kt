@@ -11,6 +11,7 @@ import io.heckel.ntfy.app.Application
 import io.heckel.ntfy.db.Repository
 import io.heckel.ntfy.firebase.FirebaseMessenger
 import io.heckel.ntfy.msg.NotificationService
+import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.CertUtil
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.topicUrl
@@ -54,6 +55,7 @@ class Backuper(val context: Context) {
         applyUsers(backupFile.users)
         applyTrustedCertificates(backupFile.trustedCertificates)
         applyClientCertificates(backupFile.clientCertificates)
+        AppShortcutManager.refreshDynamicShortcuts(context, repository, forceUpdate = true)
     }
 
     private fun applySettings(settings: Settings?) {
@@ -95,6 +97,9 @@ class Backuper(val context: Context) {
         }
         if (settings.lastSharedTopics != null) {
             settings.lastSharedTopics.forEach { repository.addLastShareTopic(it) }
+        }
+        if (settings.pinnedShortcutSubscriptionIds != null) {
+            repository.setPinnedShortcutSubscriptionIds(settings.pinnedShortcutSubscriptionIds)
         }
     }
 
@@ -282,7 +287,8 @@ class Backuper(val context: Context) {
             defaultBaseUrl = repository.getDefaultBaseUrl() ?: "",
             mutedUntil = repository.getGlobalMutedUntil(),
             connectionAlertSeconds = repository.getConnectionAlertSeconds(),
-            lastSharedTopics = repository.getLastShareTopics()
+            lastSharedTopics = repository.getLastShareTopics(),
+            pinnedShortcutSubscriptionIds = repository.getPinnedShortcutSubscriptionIds()
         )
     }
 
@@ -427,6 +433,7 @@ data class Settings(
     val mutedUntil: Long?,
     val connectionAlertSeconds: Long?,
     val lastSharedTopics: List<String>?,
+    val pinnedShortcutSubscriptionIds: List<Long>? = null
 )
 
 data class Subscription(

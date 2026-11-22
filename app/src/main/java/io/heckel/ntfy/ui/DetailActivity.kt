@@ -41,6 +41,7 @@ import io.heckel.ntfy.msg.ApiService
 import io.heckel.ntfy.msg.NotificationService
 import io.heckel.ntfy.msg.Poller
 import io.heckel.ntfy.service.SubscriberServiceManager
+import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.copyToClipboard
 import io.heckel.ntfy.util.dangerButton
@@ -139,6 +140,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_detail)
 
+        Log.init(this) // Init logs in all entry points
         Log.d(TAG, "Create $this")
 
         // Dependencies that depend on Context
@@ -190,12 +192,48 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         val howToLink = findViewById<TextView>(R.id.detail_how_to_link)
         howToLink.isVisible = BuildConfig.PAYMENT_LINKS_AVAILABLE
 
-        // Handle direct deep links to topic "ntfy://..."
+        // Handle direct deep links to topic "ntfy://..." or app shortcuts
         val url = intent?.data
         if (intent?.action == ACTION_VIEW && url != null) {
             maybeSubscribeAndLoadView(url)
+        } else if (intent?.action == ACTION_OPEN_SHORTCUT) {
+            loadSubscriptionAndLoadView()
         } else {
             loadView()
+        }
+    }
+
+    private fun loadSubscriptionAndLoadView() {
+        val targetSubscriptionId = intent.getLongExtra(MainActivity.EXTRA_SUBSCRIPTION_ID, 0L)
+        if (targetSubscriptionId == 0L) {
+            Log.w(TAG, "Invalid shortcut intent without subscription ID. Aborting.")
+            finish()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val subscription = repository.getSubscription(targetSubscriptionId)
+            if (subscription == null || subscription.upAppId != null) {
+                Log.w(TAG, "Subscription $targetSubscriptionId from shortcut no longer exists")
+                AppShortcutManager.disableSubscriptionShortcut(this@DetailActivity, targetSubscriptionId)
+                runOnUiThread {
+                    Toast.makeText(this@DetailActivity, R.string.shortcut_subscription_not_found, Toast.LENGTH_LONG).show()
+                    if (isTaskRoot) {
+                        startActivity(Intent(this@DetailActivity, MainActivity::class.java))
+                    }
+                    finish()
+                }
+                return@launch
+            }
+            AppShortcutManager.reportShortcutUsed(this@DetailActivity, subscription.id)
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_ID, subscription.id)
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_BASE_URL, subscription.baseUrl)
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_TOPIC, subscription.topic)
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_DISPLAY_NAME, displayName(appBaseUrl, subscription))
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_INSTANT, subscription.instant)
+            intent.putExtra(MainActivity.EXTRA_SUBSCRIPTION_MUTED_UNTIL, subscription.mutedUntil)
+            runOnUiThread {
+                loadView()
+            }
         }
     }
 
@@ -237,6 +275,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
                     lastActive = Date().time/1000
                 )
                 repository.addSubscription(subscription)
+                AppShortcutManager.refreshDynamicShortcuts(this@DetailActivity, repository)
 
                 // Subscribe to Firebase topic if ntfy.sh (even if instant, just to be sure!)
                 if (baseUrl == appBaseUrl) {
@@ -407,6 +446,9 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
 
         // Setup FAB and message bar
         setupPublishUI()
+
+        // Ensure options menu reflects loaded subscription (important for async shortcut/deep-link loads)
+        showHideMenuItems()
     }
 
     private fun setupPublishUI() {
@@ -651,6 +693,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         if (!this::menu.isInitialized) return
         runOnUiThread {
             menu.findItem(R.id.detail_menu_settings)?.isVisible = !isSearchActive
+            menu.findItem(R.id.detail_menu_add_shortcut)?.isVisible = !isSearchActive && AppShortcutManager.isPinShortcutSupported(this)
             menu.findItem(R.id.detail_menu_clear)?.isVisible = !isSearchActive
             menu.findItem(R.id.detail_menu_test)?.isVisible = !isSearchActive
             menu.findItem(R.id.detail_menu_unsubscribe)?.isVisible = !isSearchActive
@@ -709,6 +752,10 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
             }
             R.id.detail_menu_settings -> {
                 onSettingsClick()
+                true
+            }
+            R.id.detail_menu_add_shortcut -> {
+                onAddShortcutClick()
                 true
             }
             R.id.detail_menu_unsubscribe -> {
@@ -807,6 +854,9 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
             try {
                 val subscription = repository.getSubscription(subscriptionId) ?: return@launch
                 val newNotifications = poller.poll(subscription)
+                if (newNotifications.isNotEmpty()) {
+                    AppShortcutManager.refreshDynamicShortcuts(this@DetailActivity, repository)
+                }
                 val toastMessage = if (newNotifications.isEmpty()) {
                     getString(R.string.refresh_message_no_results)
                 } else {
@@ -906,6 +956,16 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
         startActivity(intent)
     }
 
+    private fun onAddShortcutClick() {
+        Log.d(TAG, "Requesting pinned shortcut for ${topicShortUrl(subscriptionBaseUrl, subscriptionTopic)}")
+        lifecycleScope.launch(Dispatchers.IO) {
+            val subscription = repository.getSubscription(subscriptionId) ?: return@launch
+            runOnUiThread {
+                AppShortcutManager.requestPinShortcut(this@DetailActivity, subscription)
+            }
+        }
+    }
+
     private fun onDeleteClick() {
         Log.d(TAG, "Deleting subscription ${topicShortUrl(subscriptionBaseUrl, subscriptionTopic)}")
 
@@ -913,9 +973,11 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
             .setMessage(R.string.detail_delete_dialog_message)
             .setPositiveButton(R.string.detail_delete_dialog_permanently_delete) { _, _ ->
                 Log.d(TAG, "Deleting subscription with subscription ID $subscriptionId (topic: $subscriptionTopic)")
+                val appContext = applicationContext
                 GlobalScope.launch(Dispatchers.IO) {
                     val subscription = repository.getSubscription(subscriptionId) ?: return@launch
                     repository.removeSubscription(subscription)
+                    AppShortcutManager.onSubscriptionRemoved(appContext, subscription.id, repository)
                     if (subscriptionBaseUrl == appBaseUrl) {
                         messenger.unsubscribe(subscriptionTopic)
                     }
@@ -1022,6 +1084,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
 
     companion object {
         const val TAG = "NtfyDetailActivity"
+        const val ACTION_OPEN_SHORTCUT = "io.heckel.ntfy.OPEN_SHORTCUT"
         const val EXTRA_SUBSCRIPTION_ID = "subscriptionId"
         const val EXTRA_SUBSCRIPTION_BASE_URL = "baseUrl"
         const val EXTRA_SUBSCRIPTION_TOPIC = "topic"

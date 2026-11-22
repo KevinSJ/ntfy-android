@@ -1,13 +1,18 @@
 package io.heckel.ntfy.msg
 
 import android.content.Context
+import io.heckel.ntfy.app.Application
 import io.heckel.ntfy.db.Notification
 import io.heckel.ntfy.db.Repository
 import io.heckel.ntfy.db.Subscription
 import io.heckel.ntfy.up.Distributor
+import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.decodeBytesMessage
 import io.heckel.ntfy.util.safeLet
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * The notification dispatcher figures out what to do with a notification.
@@ -51,6 +56,12 @@ class NotificationDispatcher(val context: Context, val repository: Repository) {
             DownloadManager.enqueue(context, notification.id, userAction = false, type = DownloadType.ATTACHMENT)
         } else if (downloadIcon) {
             DownloadManager.enqueue(context, notification.id, userAction = false, type = DownloadType.ICON)
+        }
+        if (subscription.upAppId == null && notification.event == ApiService.EVENT_MESSAGE) {
+            val scope = (context.applicationContext as? Application)?.ioScope ?: CoroutineScope(Dispatchers.IO)
+            scope.launch {
+                AppShortcutManager.refreshDynamicShortcuts(context, repository)
+            }
         }
     }
 

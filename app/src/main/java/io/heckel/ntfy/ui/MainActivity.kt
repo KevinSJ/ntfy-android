@@ -60,6 +60,7 @@ import io.heckel.ntfy.msg.NotificationDispatcher
 import io.heckel.ntfy.msg.Poller
 import io.heckel.ntfy.service.SubscriberService
 import io.heckel.ntfy.service.SubscriberServiceManager
+import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.SUBSCRIPTION_ICONS
 import io.heckel.ntfy.util.dangerButton
@@ -235,6 +236,11 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 showHideBatteryBanner(subscriptions)
                 showHideWebSocketBanner(subscriptions)
                 showHideWebSocketReconnectBanner()
+
+                // Keep dynamic app shortcuts synced with the most recently updated topics
+                lifecycleScope.launch(Dispatchers.IO) {
+                    AppShortcutManager.refreshDynamicShortcuts(this@MainActivity, repository)
+                }
             }
         }
 

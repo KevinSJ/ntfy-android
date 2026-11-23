@@ -164,7 +164,11 @@ class AppShortcutManagerTest {
     }
 
     @Test
-    fun shortcutId_isDeterministic() {
-        assertEquals("subscription_42", AppShortcutManager.shortcutId(42L))
+    fun shortcutId_isDeterministicAndRoundTrips() {
+        val id = AppShortcutManager.shortcutId(42L)
+        assertEquals("subscription_42", id)
+        assertEquals(42L, AppShortcutManager.parseSubscriptionId(id))
+        assertEquals(null, AppShortcutManager.parseSubscriptionId("other_42"))
+        assertEquals(null, AppShortcutManager.parseSubscriptionId("subscription_notanumber"))
     }
 }

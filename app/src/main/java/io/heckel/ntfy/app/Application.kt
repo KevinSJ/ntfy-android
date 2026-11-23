@@ -33,6 +33,7 @@ class Application : Application() {
         }
         ioScope.launch {
             AppShortcutManager.refreshDynamicShortcuts(this@Application, repository)
+            AppShortcutManager.refreshPinnedShortcuts(this@Application, repository)
         }
         registerNetworkCallback()
     }

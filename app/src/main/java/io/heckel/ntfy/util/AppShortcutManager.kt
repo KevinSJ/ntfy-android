@@ -44,6 +44,13 @@ object AppShortcutManager {
         return "$SHORTCUT_ID_PREFIX$subscriptionId"
     }
 
+    internal fun parseSubscriptionId(shortcutId: String): Long? {
+        if (!shortcutId.startsWith(SHORTCUT_ID_PREFIX)) {
+            return null
+        }
+        return shortcutId.removePrefix(SHORTCUT_ID_PREFIX).toLongOrNull()
+    }
+
     fun getMaxDynamicShortcutCount(context: Context): Int {
         return try {
             ShortcutManagerCompat.getMaxShortcutCountPerActivity(context).coerceAtLeast(0)
@@ -234,6 +241,50 @@ object AppShortcutManager {
         }
     }
 
+    suspend fun refreshPinnedShortcuts(
+        context: Context,
+        repository: Repository = Repository.getInstance(context)
+    ) {
+        try {
+            val appContext = context.applicationContext
+            val pinnedShortcuts = ShortcutManagerCompat.getShortcuts(
+                appContext,
+                ShortcutManagerCompat.FLAG_MATCH_PINNED
+            )
+            if (pinnedShortcuts.isEmpty()) {
+                return
+            }
+            val subscriptionsById = repository.getSubscriptions()
+                .filter { it.upAppId == null }
+                .associateBy { it.id }
+            val toUpdate = mutableListOf<ShortcutInfoCompat>()
+            val toDisable = mutableListOf<String>()
+            for (shortcut in pinnedShortcuts) {
+                val subscriptionId = parseSubscriptionId(shortcut.id) ?: continue
+                val subscription = subscriptionsById[subscriptionId]
+                if (subscription != null) {
+                    toUpdate.add(buildShortcutInfo(appContext, subscription))
+                } else {
+                    toDisable.add(shortcut.id)
+                }
+            }
+            if (toUpdate.isNotEmpty()) {
+                ShortcutManagerCompat.updateShortcuts(appContext, toUpdate)
+                Log.d(TAG, "Updated ${toUpdate.size} pinned shortcut(s)")
+            }
+            if (toDisable.isNotEmpty()) {
+                ShortcutManagerCompat.disableShortcuts(
+                    appContext,
+                    toDisable,
+                    appContext.getString(R.string.shortcut_disabled_message)
+                )
+                Log.d(TAG, "Disabled ${toDisable.size} stale pinned shortcut(s)")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to refresh pinned shortcuts", e)
+        }
+    }
+
     suspend fun onSubscriptionUpdated(
         context: Context,
         subscription: Subscription,
@@ -267,11 +318,15 @@ object AppShortcutManager {
         subscription: Subscription,
         appBaseUrl: String
     ): Array<Intent> {
+        // Clear any existing task stack before recreating [MainActivity, DetailActivity]
+        // so reopening a shortcut after minimizing never stacks duplicate activities.
         val mainIntent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_MAIN
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
         val detailIntent = Intent(context, DetailActivity::class.java).apply {
             action = DetailActivity.ACTION_OPEN_SHORTCUT
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(MainActivity.EXTRA_SUBSCRIPTION_ID, subscription.id)
             putExtra(MainActivity.EXTRA_SUBSCRIPTION_BASE_URL, subscription.baseUrl)
             putExtra(MainActivity.EXTRA_SUBSCRIPTION_TOPIC, subscription.topic)

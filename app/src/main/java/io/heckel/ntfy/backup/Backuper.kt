@@ -6,6 +6,8 @@ import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.annotations.SerializedName
 import com.google.gson.stream.JsonReader
+import com.google.gson.stream.JsonToken
+import com.google.gson.stream.JsonWriter
 import io.heckel.ntfy.R
 import io.heckel.ntfy.app.Application
 import io.heckel.ntfy.db.Repository
@@ -15,7 +17,10 @@ import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.CertUtil
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.topicUrl
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.InputStreamReader
+import java.io.OutputStreamWriter
 
 class Backuper(val context: Context) {
     private val gson = Gson()
@@ -24,38 +29,151 @@ class Backuper(val context: Context) {
     private val messenger = FirebaseMessenger()
     private val notifier = NotificationService(context)
 
-    suspend fun backup(uri: Uri, withSettings: Boolean = true, withSubscriptions: Boolean = true, withUsers: Boolean = true) {
+    suspend fun backup(
+        uri: Uri,
+        withSettings: Boolean = true,
+        withSubscriptions: Boolean = true,
+        withUsers: Boolean = true,
+        onProgress: ((Int) -> Unit)? = null
+    ) {
         Log.d(TAG, "Backing up settings to file $uri")
-        val json = gson.toJson(createBackupFile(withSettings, withSubscriptions, withUsers))
         val outputStream = resolver.openOutputStream(uri) ?: throw Exception("Cannot open output stream")
-        outputStream.use { it.write(json.toByteArray()) }
+        val settings = if (withSettings) createSettings() else null
+        val subscriptions = if (withSubscriptions) createSubscriptionList() else null
+        val users = if (withUsers) createUserList() else null
+        val trustedCertificates = if (withSettings) createTrustedCertificateList() else null
+        val clientCertificates = if (withSettings) createClientCertificateList() else null
+
+        outputStream.use { stream ->
+            JsonWriter(BufferedWriter(OutputStreamWriter(stream, Charsets.UTF_8), IO_BUFFER_SIZE)).use { writer ->
+                writeBackupJson(
+                    writer = writer,
+                    gson = gson,
+                    settings = settings,
+                    subscriptions = subscriptions,
+                    users = users,
+                    trustedCertificates = trustedCertificates,
+                    clientCertificates = clientCertificates,
+                    writeNotifications = if (withSubscriptions) { emit ->
+                        var page = repository.getNotificationsFirstPage(BATCH_SIZE)
+                        var totalWritten = 0
+                        while (page.isNotEmpty()) {
+                            for (n in page) {
+                                emit(toBackupNotification(n))
+                            }
+                            totalWritten += page.size
+                            onProgress?.invoke(totalWritten)
+                            val last = page.last()
+                            page = if (page.size < BATCH_SIZE) {
+                                emptyList()
+                            } else {
+                                repository.getNotificationsAfter(last.id, last.subscriptionId, BATCH_SIZE)
+                            }
+                        }
+                    } else null
+                )
+            }
+        }
         Log.d(TAG, "Backup done")
     }
 
-    suspend fun restore(uri: Uri) {
+    suspend fun restore(uri: Uri, onProgress: ((Int) -> Unit)? = null) {
         Log.d(TAG, "Restoring settings from file $uri")
-        val reader = JsonReader(InputStreamReader(resolver.openInputStream(uri)))
-        val backupFile = gson.fromJson<BackupFile>(reader, BackupFile::class.java)
-        applyBackupFile(backupFile)
+        val inputStream = resolver.openInputStream(uri) ?: throw Exception("Cannot open input stream")
+        var restoredSettings: Settings? = null
+        val restoredSubscriptions = mutableListOf<io.heckel.ntfy.db.Subscription>()
+
+        inputStream.use { stream ->
+            JsonReader(BufferedReader(InputStreamReader(stream, Charsets.UTF_8), IO_BUFFER_SIZE)).use { reader ->
+                repository.withTransaction {
+                    readBackupJson(
+                        reader = reader,
+                        gson = gson,
+                        batchSize = BATCH_SIZE,
+                        onSettings = { settings ->
+                            restoredSettings = settings
+                        },
+                        onSubscription = { s ->
+                            try {
+                                val subscription = io.heckel.ntfy.db.Subscription(
+                                    id = s.id,
+                                    baseUrl = s.baseUrl,
+                                    topic = s.topic,
+                                    instant = s.instant,
+                                    dedicatedChannels = s.dedicatedChannels,
+                                    mutedUntil = s.mutedUntil,
+                                    minPriority = s.minPriority ?: Repository.MIN_PRIORITY_USE_GLOBAL,
+                                    autoDelete = s.autoDelete ?: Repository.AUTO_DELETE_USE_GLOBAL,
+                                    insistent = s.insistent ?: Repository.INSISTENT_MAX_PRIORITY_USE_GLOBAL,
+                                    lastNotificationId = s.lastNotificationId,
+                                    icon = s.icon,
+                                    upAppId = s.upAppId,
+                                    upConnectorToken = s.upConnectorToken,
+                                    displayName = s.displayName,
+                                )
+                                repository.addSubscription(subscription)
+                                restoredSubscriptions.add(subscription)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Unable to restore subscription ${s.id} (${topicUrl(s.baseUrl, s.topic)}): ${e.message}. Ignoring.", e)
+                            }
+                        },
+                        onNotificationsBatch = { batch ->
+                            repository.addNotifications(batch)
+                        },
+                        onUser = { u ->
+                            try {
+                                repository.addUser(io.heckel.ntfy.db.User(
+                                    baseUrl = u.baseUrl,
+                                    username = u.username,
+                                    password = u.password
+                                ))
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Unable to restore user ${u.baseUrl} / ${u.username}: ${e.message}. Ignoring.", e)
+                            }
+                        },
+                        onTrustedCertificate = { c ->
+                            try {
+                                CertUtil.parsePemCertificate(c.pem) // Validate the certificate
+                                repository.addTrustedCertificate(c.baseUrl, c.pem)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Unable to restore trusted certificate for ${c.baseUrl}: ${e.message}. Ignoring.", e)
+                            }
+                        },
+                        onClientCertificate = { c ->
+                            try {
+                                repository.addClientCertificate(c.baseUrl, c.p12Base64, c.password)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "Unable to restore client certificate for ${c.baseUrl}: ${e.message}. Ignoring.", e)
+                            }
+                        },
+                        onNotificationError = { id, e ->
+                            Log.w(TAG, "Unable to restore notification $id: ${e.message}. Ignoring.", e)
+                        },
+                        onProgress = onProgress
+                    )
+                }
+            }
+        }
+
+        // Apply non-database side effects only after the database transaction has committed
+        applySettings(restoredSettings)
+        val appBaseUrl = context.getString(R.string.app_base_url)
+        restoredSubscriptions.forEach { subscription ->
+            if (subscription.baseUrl == appBaseUrl) {
+                messenger.subscribe(subscription.topic)
+            }
+            if (subscription.dedicatedChannels) {
+                notifier.createSubscriptionNotificationChannels(subscription)
+                // TODO Backup/restore individual notification channel settings
+            }
+        }
+        AppShortcutManager.refreshDynamicShortcuts(context, repository, forceUpdate = true)
         Log.d(TAG, "Restoring done")
     }
 
     fun settingsAsString(): String {
         val gson = GsonBuilder().setPrettyPrinting().create()
         return gson.toJson(createSettings())
-    }
-
-    private suspend fun applyBackupFile(backupFile: BackupFile) {
-        if (backupFile.magic != FILE_MAGIC) {
-            throw InvalidBackupFileException()
-        }
-        applySettings(backupFile.settings)
-        applySubscriptions(backupFile.subscriptions)
-        applyNotifications(backupFile.notifications)
-        applyUsers(backupFile.users)
-        applyTrustedCertificates(backupFile.trustedCertificates)
-        applyClientCertificates(backupFile.clientCertificates)
-        AppShortcutManager.refreshDynamicShortcuts(context, repository, forceUpdate = true)
     }
 
     private fun applySettings(settings: Settings?) {
@@ -103,177 +221,6 @@ class Backuper(val context: Context) {
         }
     }
 
-    private suspend fun applySubscriptions(subscriptions: List<Subscription>?) {
-        if (subscriptions == null) {
-            return
-        }
-        val appBaseUrl = context.getString(R.string.app_base_url)
-        subscriptions.forEach { s ->
-            try {
-                // Add to database
-                val subscription = io.heckel.ntfy.db.Subscription(
-                    id = s.id,
-                    baseUrl = s.baseUrl,
-                    topic = s.topic,
-                    instant = s.instant,
-                    dedicatedChannels = s.dedicatedChannels,
-                    mutedUntil = s.mutedUntil,
-                    minPriority = s.minPriority ?: Repository.MIN_PRIORITY_USE_GLOBAL,
-                    autoDelete = s.autoDelete ?: Repository.AUTO_DELETE_USE_GLOBAL,
-                    insistent = s.insistent ?: Repository.INSISTENT_MAX_PRIORITY_USE_GLOBAL,
-                    lastNotificationId = s.lastNotificationId,
-                    icon = s.icon,
-                    upAppId = s.upAppId,
-                    upConnectorToken = s.upConnectorToken,
-                    displayName = s.displayName,
-                )
-                repository.addSubscription(subscription)
-
-                // Subscribe to Firebase topics
-                if (s.baseUrl == appBaseUrl) {
-                    messenger.subscribe(s.topic)
-                }
-
-                // Create dedicated channels
-                if (s.dedicatedChannels) {
-                    notifier.createSubscriptionNotificationChannels(subscription)
-                    // TODO Backup/restore individual notification channel settings
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Unable to restore subscription ${s.id} (${topicUrl(s.baseUrl, s.topic)}): ${e.message}. Ignoring.", e)
-            }
-        }
-    }
-
-    private suspend fun applyNotifications(notifications: List<Notification>?) {
-        if (notifications == null) {
-            return
-        }
-        notifications.forEach { n ->
-            try {
-                val actions = if (n.actions != null) {
-                    n.actions.map { a ->
-                        io.heckel.ntfy.db.Action(
-                            id = a.id,
-                            action = a.action,
-                            label = a.label,
-                            clear = a.clear,
-                            url = a.url,
-                            method = a.method,
-                            headers = a.headers,
-                            body = a.body,
-                            intent = a.intent,
-                            extras = a.extras,
-                            value = a.value,
-                            progress = a.progress,
-                            error = a.error
-                        )
-                    }
-                } else {
-                    null
-                }
-                val attachment = if (n.attachment != null) {
-                    io.heckel.ntfy.db.Attachment(
-                        name = n.attachment.name,
-                        type = n.attachment.type,
-                        size = n.attachment.size,
-                        expires = n.attachment.expires,
-                        url = n.attachment.url,
-                        contentUri = n.attachment.contentUri,
-                        progress = n.attachment.progress,
-                    )
-                } else {
-                    null
-                }
-                val icon = if (n.icon != null && !n.icon.url.isNullOrEmpty()) {
-                    io.heckel.ntfy.db.Icon(
-                        url = n.icon.url,
-                        contentUri = n.icon.contentUri,
-                    )
-                } else {
-                    null
-                }
-                repository.addNotification(io.heckel.ntfy.db.Notification(
-                    id = n.id,
-                    subscriptionId = n.subscriptionId,
-                    timestamp = n.timestamp,
-                    sequenceId = n.sequenceId ?: n.id,
-                    title = n.title,
-                    message = n.message,
-                    contentType = n.contentType,
-                    encoding = n.encoding,
-                    notificationId = 0,
-                    priority = n.priority,
-                    tags = n.tags,
-                    click = n.click,
-                    icon = icon,
-                    actions = actions,
-                    attachment = attachment,
-                    deleted = n.deleted
-                ))
-            } catch (e: Exception) {
-                Log.w(TAG, "Unable to restore notification ${n.id}: ${e.message}. Ignoring.", e)
-            }
-        }
-    }
-
-    private suspend fun applyUsers(users: List<User>?) {
-        if (users == null) {
-            return
-        }
-        users.forEach { u ->
-            try {
-                repository.addUser(io.heckel.ntfy.db.User(
-                    baseUrl = u.baseUrl,
-                    username = u.username,
-                    password = u.password
-                ))
-            } catch (e: Exception) {
-                Log.w(TAG, "Unable to restore user ${u.baseUrl} / ${u.username}: ${e.message}. Ignoring.", e)
-            }
-        }
-    }
-
-    private suspend fun applyTrustedCertificates(certificates: List<TrustedCertificateBackup>?) {
-        if (certificates == null) {
-            return
-        }
-        certificates.forEach { c ->
-            try {
-                CertUtil.parsePemCertificate(c.pem) // Validate the certificate
-                repository.addTrustedCertificate(c.baseUrl, c.pem)
-            } catch (e: Exception) {
-                Log.w(TAG, "Unable to restore trusted certificate for ${c.baseUrl}: ${e.message}. Ignoring.", e)
-            }
-        }
-    }
-
-    private suspend fun applyClientCertificates(certificates: List<ClientCertificateBackup>?) {
-        if (certificates == null) {
-            return
-        }
-        certificates.forEach { c ->
-            try {
-                repository.addClientCertificate(c.baseUrl, c.p12Base64, c.password)
-            } catch (e: Exception) {
-                Log.w(TAG, "Unable to restore client certificate for ${c.baseUrl}: ${e.message}. Ignoring.", e)
-            }
-        }
-    }
-
-    private suspend fun createBackupFile(withSettings: Boolean, withSubscriptions: Boolean, withUsers: Boolean): BackupFile {
-        return BackupFile(
-            magic = FILE_MAGIC,
-            version = FILE_VERSION,
-            settings = if (withSettings) createSettings() else null,
-            subscriptions = if (withSubscriptions) createSubscriptionList() else null,
-            notifications = if (withSubscriptions) createNotificationList() else null,
-            users = if (withUsers) createUserList() else null,
-            trustedCertificates = if (withSettings) createTrustedCertificateList() else null,
-            clientCertificates = if (withSettings) createClientCertificateList() else null
-        )
-    }
-
     private fun createSettings(): Settings {
         return Settings(
             minPriority = repository.getMinPriority(),
@@ -313,8 +260,43 @@ class Backuper(val context: Context) {
         }
     }
 
-    private suspend fun createNotificationList(): List<Notification> {
-        return repository.getNotifications().map { n ->
+    private suspend fun createUserList(): List<User> {
+        return repository.getUsers().map { u ->
+            User(
+                baseUrl = u.baseUrl,
+                username = u.username,
+                password = u.password
+            )
+        }
+    }
+
+    private suspend fun createTrustedCertificateList(): List<TrustedCertificateBackup> {
+        return repository.getTrustedCertificates().map { trustedCert ->
+            TrustedCertificateBackup(
+                baseUrl = trustedCert.baseUrl,
+                pem = trustedCert.pem
+            )
+        }
+    }
+
+    private suspend fun createClientCertificateList(): List<ClientCertificateBackup> {
+        return repository.getClientCertificates().map { clientCert ->
+            ClientCertificateBackup(
+                baseUrl = clientCert.baseUrl,
+                p12Base64 = clientCert.p12Base64,
+                password = clientCert.password
+            )
+        }
+    }
+
+    companion object {
+        internal const val FILE_MAGIC = "ntfy2586"
+        internal const val FILE_VERSION = 1
+        internal const val BATCH_SIZE = 1000
+        private const val IO_BUFFER_SIZE = 64 * 1024
+        private const val TAG = "NtfyExporter"
+
+        internal fun toBackupNotification(n: io.heckel.ntfy.db.Notification): Notification {
             val actions = n.actions?.map { a ->
                 Action(
                     id = a.id,
@@ -353,7 +335,7 @@ class Backuper(val context: Context) {
             } else {
                 null
             }
-            Notification(
+            return Notification(
                 id = n.id,
                 subscriptionId = n.subscriptionId,
                 timestamp = n.timestamp,
@@ -371,41 +353,250 @@ class Backuper(val context: Context) {
                 deleted = n.deleted
             )
         }
-    }
 
-    private suspend fun createUserList(): List<User> {
-        return repository.getUsers().map { u ->
-            User(
-                baseUrl = u.baseUrl,
-                username = u.username,
-                password = u.password
+        internal fun toDbNotification(n: Notification): io.heckel.ntfy.db.Notification {
+            val id = n.id ?: throw IllegalArgumentException("Notification ID is null")
+            val actions = n.actions?.map { a ->
+                io.heckel.ntfy.db.Action(
+                    id = a.id,
+                    action = a.action,
+                    label = a.label,
+                    clear = a.clear,
+                    url = a.url,
+                    method = a.method,
+                    headers = a.headers,
+                    body = a.body,
+                    intent = a.intent,
+                    extras = a.extras,
+                    value = a.value,
+                    progress = a.progress,
+                    error = a.error
+                )
+            }
+            val attachment = if (n.attachment != null) {
+                io.heckel.ntfy.db.Attachment(
+                    name = n.attachment.name,
+                    type = n.attachment.type,
+                    size = n.attachment.size,
+                    expires = n.attachment.expires,
+                    url = n.attachment.url,
+                    contentUri = n.attachment.contentUri,
+                    progress = n.attachment.progress,
+                )
+            } else {
+                null
+            }
+            val icon = if (n.icon != null && !n.icon.url.isNullOrEmpty()) {
+                io.heckel.ntfy.db.Icon(
+                    url = n.icon.url,
+                    contentUri = n.icon.contentUri,
+                )
+            } else {
+                null
+            }
+            return io.heckel.ntfy.db.Notification(
+                id = id,
+                subscriptionId = n.subscriptionId,
+                timestamp = n.timestamp,
+                sequenceId = n.sequenceId?.takeIf { it.isNotEmpty() } ?: id,
+                title = n.title ?: "",
+                message = n.message ?: "",
+                contentType = n.contentType ?: "",
+                encoding = n.encoding ?: "",
+                notificationId = 0,
+                priority = n.priority,
+                tags = n.tags ?: "",
+                click = n.click ?: "",
+                icon = icon,
+                actions = actions,
+                attachment = attachment,
+                deleted = n.deleted
             )
         }
-    }
 
-    private suspend fun createTrustedCertificateList(): List<TrustedCertificateBackup> {
-        return repository.getTrustedCertificates().map { trustedCert ->
-            TrustedCertificateBackup(
-                baseUrl = trustedCert.baseUrl,
-                pem = trustedCert.pem
-            )
+        internal suspend fun writeBackupJson(
+            writer: JsonWriter,
+            gson: Gson,
+            settings: Settings?,
+            subscriptions: List<Subscription>?,
+            users: List<User>?,
+            trustedCertificates: List<TrustedCertificateBackup>?,
+            clientCertificates: List<ClientCertificateBackup>?,
+            writeNotifications: (suspend (emit: (Notification) -> Unit) -> Unit)?
+        ) {
+            writer.beginObject()
+            writer.name("magic").value(FILE_MAGIC)
+            writer.name("version").value(FILE_VERSION)
+            if (settings != null) {
+                writer.name("settings")
+                gson.getAdapter(Settings::class.java).write(writer, settings)
+            }
+            if (subscriptions != null) {
+                val adapter = gson.getAdapter(Subscription::class.java)
+                writer.name("subscriptions")
+                writer.beginArray()
+                for (subscription in subscriptions) {
+                    adapter.write(writer, subscription)
+                }
+                writer.endArray()
+            }
+            if (writeNotifications != null) {
+                val adapter = gson.getAdapter(Notification::class.java)
+                writer.name("notifications")
+                writer.beginArray()
+                writeNotifications { notification ->
+                    adapter.write(writer, notification)
+                }
+                writer.endArray()
+            }
+            if (users != null) {
+                val adapter = gson.getAdapter(User::class.java)
+                writer.name("users")
+                writer.beginArray()
+                for (user in users) {
+                    adapter.write(writer, user)
+                }
+                writer.endArray()
+            }
+            if (trustedCertificates != null) {
+                val adapter = gson.getAdapter(TrustedCertificateBackup::class.java)
+                writer.name("trustedCertificates")
+                writer.beginArray()
+                for (cert in trustedCertificates) {
+                    adapter.write(writer, cert)
+                }
+                writer.endArray()
+            }
+            if (clientCertificates != null) {
+                val adapter = gson.getAdapter(ClientCertificateBackup::class.java)
+                writer.name("clientCertificates")
+                writer.beginArray()
+                for (cert in clientCertificates) {
+                    adapter.write(writer, cert)
+                }
+                writer.endArray()
+            }
+            writer.endObject()
+            writer.flush()
         }
-    }
 
-    private suspend fun createClientCertificateList(): List<ClientCertificateBackup> {
-        return repository.getClientCertificates().map { clientCert ->
-            ClientCertificateBackup(
-                baseUrl = clientCert.baseUrl,
-                p12Base64 = clientCert.p12Base64,
-                password = clientCert.password
-            )
+        internal suspend fun readBackupJson(
+            reader: JsonReader,
+            gson: Gson,
+            batchSize: Int = BATCH_SIZE,
+            onSettings: (Settings) -> Unit,
+            onSubscription: suspend (Subscription) -> Unit,
+            onNotificationsBatch: suspend (List<io.heckel.ntfy.db.Notification>) -> Unit,
+            onUser: suspend (User) -> Unit,
+            onTrustedCertificate: suspend (TrustedCertificateBackup) -> Unit,
+            onClientCertificate: suspend (ClientCertificateBackup) -> Unit,
+            onNotificationError: (String?, Exception) -> Unit = { _, _ -> },
+            onProgress: ((Int) -> Unit)? = null
+        ) {
+            if (reader.peek() != JsonToken.BEGIN_OBJECT) {
+                throw InvalidBackupFileException()
+            }
+            var magic: String? = null
+            var restoredNotificationCount = 0
+
+            val settingsAdapter = gson.getAdapter(Settings::class.java)
+            val subscriptionAdapter = gson.getAdapter(Subscription::class.java)
+            val notificationAdapter = gson.getAdapter(Notification::class.java)
+            val userAdapter = gson.getAdapter(User::class.java)
+            val trustedCertAdapter = gson.getAdapter(TrustedCertificateBackup::class.java)
+            val clientCertAdapter = gson.getAdapter(ClientCertificateBackup::class.java)
+
+            reader.beginObject()
+            while (reader.hasNext()) {
+                when (reader.nextName()) {
+                    "magic" -> {
+                        if (reader.peek() == JsonToken.NULL) {
+                            reader.nextNull()
+                            throw InvalidBackupFileException()
+                        }
+                        magic = reader.nextString()
+                        if (magic != FILE_MAGIC) {
+                            throw InvalidBackupFileException()
+                        }
+                    }
+                    "version" -> reader.skipValue()
+                    "settings" -> {
+                        if (reader.peek() == JsonToken.NULL) {
+                            reader.nextNull()
+                        } else {
+                            settingsAdapter.read(reader)?.let(onSettings)
+                        }
+                    }
+                    "subscriptions" -> {
+                        readJsonArray(reader) {
+                            subscriptionAdapter.read(reader)?.let { onSubscription(it) }
+                        }
+                    }
+                    "notifications" -> {
+                        val batch = ArrayList<io.heckel.ntfy.db.Notification>(batchSize)
+                        readJsonArray(reader) {
+                            val parsed = notificationAdapter.read(reader)
+                            if (parsed != null) {
+                                val dbNotification = try {
+                                    toDbNotification(parsed)
+                                } catch (e: Exception) {
+                                    onNotificationError(parsed.id, e)
+                                    null
+                                }
+                                if (dbNotification != null) {
+                                    batch.add(dbNotification)
+                                    if (batch.size >= batchSize) {
+                                        onNotificationsBatch(batch.toList())
+                                        restoredNotificationCount += batch.size
+                                        batch.clear()
+                                        onProgress?.invoke(restoredNotificationCount)
+                                    }
+                                }
+                            }
+                        }
+                        if (batch.isNotEmpty()) {
+                            onNotificationsBatch(batch.toList())
+                            restoredNotificationCount += batch.size
+                            batch.clear()
+                            onProgress?.invoke(restoredNotificationCount)
+                        }
+                    }
+                    "users" -> {
+                        readJsonArray(reader) {
+                            userAdapter.read(reader)?.let { onUser(it) }
+                        }
+                    }
+                    "trustedCertificates" -> {
+                        readJsonArray(reader) {
+                            trustedCertAdapter.read(reader)?.let { onTrustedCertificate(it) }
+                        }
+                    }
+                    "clientCertificates" -> {
+                        readJsonArray(reader) {
+                            clientCertAdapter.read(reader)?.let { onClientCertificate(it) }
+                        }
+                    }
+                    else -> reader.skipValue()
+                }
+            }
+            reader.endObject()
+
+            if (magic != FILE_MAGIC) {
+                throw InvalidBackupFileException()
+            }
         }
-    }
 
-    companion object {
-        private const val FILE_MAGIC = "ntfy2586"
-        private const val FILE_VERSION = 1
-        private const val TAG = "NtfyExporter"
+        private inline fun readJsonArray(reader: JsonReader, onElement: () -> Unit) {
+            if (reader.peek() == JsonToken.NULL) {
+                reader.nextNull()
+                return
+            }
+            reader.beginArray()
+            while (reader.hasNext()) {
+                onElement()
+            }
+            reader.endArray()
+        }
     }
 }
 
@@ -454,17 +645,17 @@ data class Subscription(
 )
 
 data class Notification(
-    val id: String,
+    val id: String?,
     val subscriptionId: Long,
     val timestamp: Long,
     @SerializedName("sequence_id") val sequenceId: String?, // Sequence ID for updating notifications
-    val title: String,
-    val message: String,
-    val contentType: String, // "" or "text/markdown" (empty assumes "text/plain")
-    val encoding: String, // "base64" or ""
+    val title: String?,
+    val message: String?,
+    val contentType: String?, // "" or "text/markdown" (empty assumes "text/plain")
+    val encoding: String?, // "base64" or ""
     val priority: Int, // 1=min, 3=default, 5=max
-    val tags: String,
-    val click: String, // URL/intent to open on notification click
+    val tags: String?,
+    val click: String?, // URL/intent to open on notification click
     val icon: Icon?,
     val actions: List<Action>?,
     val attachment: Attachment?,

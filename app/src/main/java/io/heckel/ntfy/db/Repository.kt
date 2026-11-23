@@ -12,13 +12,14 @@ import androidx.lifecycle.MediatorLiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.asLiveData
 import androidx.lifecycle.map
+import androidx.room.withTransaction
 import io.heckel.ntfy.msg.ApiService
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.validUrl
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-class Repository(private val sharedPrefs: SharedPreferences, database: Database) {
+class Repository(private val sharedPrefs: SharedPreferences, private val database: Database) {
     private val subscriptionDao = database.subscriptionDao()
     private val notificationDao = database.notificationDao()
     private val userDao = database.userDao()
@@ -104,8 +105,20 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         updateConnectionDetails(subscription.baseUrl, ConnectionState.NOT_APPLICABLE)
     }
 
+    suspend fun <T> withTransaction(block: suspend () -> T): T {
+        return database.withTransaction(block)
+    }
+
     suspend fun getNotifications(): List<Notification> {
         return notificationDao.list()
+    }
+
+    suspend fun getNotificationsFirstPage(limit: Int): List<Notification> {
+        return notificationDao.listFirstPage(limit)
+    }
+
+    suspend fun getNotificationsAfter(lastId: String, lastSubscriptionId: Long, limit: Int): List<Notification> {
+        return notificationDao.listAfter(lastId, lastSubscriptionId, limit)
     }
 
     fun getDeletedNotificationsWithAttachments(): List<Notification> {
@@ -146,6 +159,13 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         subscriptionDao.updateLastNotificationId(notification.subscriptionId, notification.id)
         notificationDao.add(notification)
         return true
+    }
+
+    @WorkerThread
+    fun addNotifications(notifications: List<Notification>) {
+        if (notifications.isNotEmpty()) {
+            notificationDao.addAll(notifications)
+        }
     }
 
     fun updateNotification(notification: Notification) {

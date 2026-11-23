@@ -417,10 +417,14 @@
     <string name="settings_backup_restore_backup_entry_settings_only">Settings only</string>
     <string name="settings_backup_restore_backup_successful">Backup created</string>
     <string name="settings_backup_restore_backup_failed">Backup failed: %1$s</string>
+    <string name="settings_backup_restore_backup_in_progress">Creating backup …</string>
+    <string name="settings_backup_restore_backup_in_progress_count">Creating backup … (%1$d notifications)</string>
     <string name="settings_backup_restore_restore_title">Restore from file</string>
     <string name="settings_backup_restore_restore_summary">Import config, notifications and users</string>
     <string name="settings_backup_restore_restore_successful">Restore successful</string>
     <string name="settings_backup_restore_restore_failed">Restore failed: %1$s</string>
+    <string name="settings_backup_restore_restore_in_progress">Restoring backup …</string>
+    <string name="settings_backup_restore_restore_in_progress_count">Restoring backup … (%1$d notifications)</string>
     <string name="settings_advanced_header">Advanced</string>
     <string name="settings_advanced_connection_alert_title">Alert when disconnected</string>
     <string name="settings_advanced_connection_alert_summary_never">Never notify when the ntfy server cannot be reached</string>

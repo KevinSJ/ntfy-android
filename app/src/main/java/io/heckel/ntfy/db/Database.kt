@@ -587,6 +587,17 @@ interface NotificationDao {
     @Query("SELECT * FROM notification")
     suspend fun list(): List<Notification>
 
+    @Query("SELECT * FROM notification ORDER BY id ASC, subscriptionId ASC LIMIT :limit")
+    suspend fun listFirstPage(limit: Int): List<Notification>
+
+    @Query("""
+        SELECT * FROM notification
+        WHERE (id > :lastId) OR (id = :lastId AND subscriptionId > :lastSubscriptionId)
+        ORDER BY id ASC, subscriptionId ASC
+        LIMIT :limit
+    """)
+    suspend fun listAfter(lastId: String, lastSubscriptionId: Long, limit: Int): List<Notification>
+
     @Query("SELECT * FROM notification WHERE subscriptionId = :subscriptionId AND deleted != 1 ORDER BY timestamp DESC")
     fun listFlow(subscriptionId: Long): Flow<List<Notification>>
 
@@ -614,6 +625,9 @@ interface NotificationDao {
 
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     fun add(notification: Notification)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    fun addAll(notifications: List<Notification>)
 
     @Update(onConflict = OnConflictStrategy.IGNORE)
     fun update(notification: Notification)

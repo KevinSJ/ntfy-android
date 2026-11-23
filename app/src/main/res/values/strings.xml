@@ -218,6 +218,7 @@
     <string name="detail_menu_copy_url">Copy topic address</string>
     <string name="detail_menu_clear">Clear all notifications</string>
     <string name="detail_menu_settings">Subscription settings</string>
+    <string name="detail_menu_add_shortcut">Add shortcut to home screen</string>
     <string name="detail_menu_unsubscribe">Unsubscribe</string>
     <string name="detail_menu_search">Search notifications</string>
     <string name="detail_menu_search_hint">Search in notifications</string>
@@ -510,10 +511,23 @@
     <string name="detail_settings_appearance_display_name_title">Display name</string>
     <string name="detail_settings_appearance_display_name_message">Set a custom display name for this subscription. Leave blank for default (%1$s).</string>
     <string name="detail_settings_appearance_display_name_default_summary">%1$s (default)</string>
+    <string name="detail_settings_appearance_pin_shortcut_title">Pin to app shortcuts</string>
+    <string name="detail_settings_appearance_pin_shortcut_summary_on">Pinned to launcher app icon shortcuts</string>
+    <string name="detail_settings_appearance_pin_shortcut_summary_off">App icon shortcuts show recently updated topics by default</string>
+    <string name="detail_settings_appearance_pin_shortcut_limit_toast">Up to %1$d topics can be pinned to app shortcuts</string>
+    <string name="detail_settings_appearance_add_shortcut_title">Add shortcut to home screen</string>
+    <string name="detail_settings_appearance_add_shortcut_summary">Create a home screen shortcut for this topic</string>
     <string name="detail_settings_global_setting_title">Use global setting</string>
     <string name="detail_settings_global_setting_suffix">using global setting</string>
     <string name="detail_settings_about_header">About</string>
     <string name="detail_settings_about_topic_url_title">Topic URL</string>
+
+    <!-- App shortcuts -->
+    <string name="shortcut_picker_label">Topic shortcut</string>
+    <string name="shortcut_picker_title">Choose topic for shortcut</string>
+    <string name="shortcut_picker_empty">Subscribe to a topic first to create a shortcut.</string>
+    <string name="shortcut_disabled_message">This topic is no longer subscribed</string>
+    <string name="shortcut_subscription_not_found">This topic is no longer subscribed</string>
 
     <!-- User add/edit dialog (UserFragment) -->
     <string name="user_dialog_title_add">Add user</string>

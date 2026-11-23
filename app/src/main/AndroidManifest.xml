@@ -91,6 +91,18 @@
             </intent-filter>
         </activity>
 
+        <!-- App shortcut picker activity for launcher "Create shortcut" widgets/shortcuts menu -->
+        <activity
+                android:name=".ui.ShortcutActivity"
+                android:label="@string/shortcut_picker_label"
+                android:icon="@mipmap/ic_launcher"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.CREATE_SHORTCUT" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+
         <!-- Hack: Activity used for "view" action button with "clear=true" (to be able to cancel notifications and show a URL) -->
         <activity
                 android:name=".msg.NotificationService$ViewActionWithClearActivity"

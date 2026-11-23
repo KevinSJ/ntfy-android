@@ -9,6 +9,7 @@ import io.heckel.ntfy.R
 import io.heckel.ntfy.db.*
 import io.heckel.ntfy.firebase.FirebaseMessenger
 import io.heckel.ntfy.up.Distributor
+import io.heckel.ntfy.util.AppShortcutManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import androidx.core.net.toUri
@@ -33,6 +34,7 @@ class SubscriptionsViewModel(private val repository: Repository) : ViewModel() {
             distributor.sendUnregistered(subscription.upAppId, subscription.upConnectorToken)
         }
         repository.removeSubscription(subscription)
+        AppShortcutManager.onSubscriptionRemoved(context, subscription.id, repository)
         if (subscription.icon != null) {
             val resolver = context.applicationContext.contentResolver
             try {

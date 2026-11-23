@@ -544,6 +544,43 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         }
     }
 
+    fun getPinnedShortcutSubscriptionIds(): List<Long> {
+        val raw = sharedPrefs.getString(SHARED_PREFS_PINNED_SHORTCUT_IDS, "") ?: ""
+        if (raw.isBlank()) {
+            return emptyList()
+        }
+        return raw.split(",")
+            .mapNotNull { it.trim().toLongOrNull() }
+            .distinct()
+    }
+
+    fun setPinnedShortcutSubscriptionIds(subscriptionIds: List<Long>) {
+        val cleaned = subscriptionIds.distinct()
+        sharedPrefs.edit {
+            if (cleaned.isEmpty()) {
+                remove(SHARED_PREFS_PINNED_SHORTCUT_IDS)
+            } else {
+                putString(SHARED_PREFS_PINNED_SHORTCUT_IDS, cleaned.joinToString(separator = ","))
+            }
+        }
+    }
+
+    fun isSubscriptionPinnedToShortcuts(subscriptionId: Long): Boolean {
+        return getPinnedShortcutSubscriptionIds().contains(subscriptionId)
+    }
+
+    fun setSubscriptionPinnedToShortcuts(subscriptionId: Long, pinned: Boolean) {
+        val current = getPinnedShortcutSubscriptionIds()
+        val updated = if (pinned) {
+            if (current.contains(subscriptionId)) current else current + subscriptionId
+        } else {
+            current.filterNot { it == subscriptionId }
+        }
+        if (updated != current) {
+            setPinnedShortcutSubscriptionIds(updated)
+        }
+    }
+
     private fun toSubscriptionList(list: List<SubscriptionWithMetadata>): List<Subscription> {
         return list.map { s ->
             Subscription(
@@ -666,6 +703,7 @@ class Repository(private val sharedPrefs: SharedPreferences, database: Database)
         const val SHARED_PREFS_CONNECTION_ALERT_SECONDS = "ConnectionAlertSeconds"
         const val SHARED_PREFS_CONNECTION_ALERT_SNOOZE_UNTIL_TIME = "ConnectionAlertSnoozeUntilTime" // Timestamp in millis
         const val SHARED_PREFS_LAST_TOPICS = "LastTopics"
+        const val SHARED_PREFS_PINNED_SHORTCUT_IDS = "PinnedShortcutIds"
 
         private const val LAST_TOPICS_COUNT = 3
 

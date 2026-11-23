@@ -144,6 +144,8 @@ class DetailSettingsActivity : AppCompatActivity() {
                 loadIconRemovePref()
                 loadDedicatedChannelsPrefs()
                 loadOpenChannelsPrefs()
+                loadPinShortcutPref()
+                loadAddShortcutPref()
             } else {
                 val notificationsHeaderId = context?.getString(R.string.detail_settings_notifications_header_key) ?: return
                 val notificationsHeader: PreferenceCategory? = findPreference(notificationsHeaderId)
@@ -372,7 +374,7 @@ class DetailSettingsActivity : AppCompatActivity() {
                 iconRemovePref.isVisible = false
                 iconSetPref.isVisible = true
                 deleteIcon(subscription.icon)
-                save(subscription.copy(icon = null))
+                save(subscription.copy(icon = null), updateShortcut = true)
                 true
             }
 
@@ -397,7 +399,7 @@ class DetailSettingsActivity : AppCompatActivity() {
                 override fun putString(key: String?, value: String?) {
                     val displayName = if (value != "") value else null
                     val newSubscription = subscription.copy(displayName = displayName)
-                    save(newSubscription)
+                    save(newSubscription, updateShortcut = true)
                     // Update activity title
                     activity?.runOnUiThread {
                         activity?.title = displayName(appBaseUrl, newSubscription)
@@ -421,6 +423,62 @@ class DetailSettingsActivity : AppCompatActivity() {
                 } else {
                     provider.text
                 }
+            }
+        }
+
+        private fun loadPinShortcutPref() {
+            val prefId = context?.getString(R.string.detail_settings_appearance_pin_shortcut_key) ?: return
+            val pref: SwitchPreferenceCompat? = findPreference(prefId)
+            val maxShortcuts = AppShortcutManager.getMaxDynamicShortcutCount(requireContext())
+            pref?.isVisible = maxShortcuts > 0
+            pref?.isChecked = repository.isSubscriptionPinnedToShortcuts(subscription.id)
+            pref?.onPreferenceChangeListener = Preference.OnPreferenceChangeListener { _, newValue ->
+                val context = context ?: return@OnPreferenceChangeListener false
+                val pin = newValue as? Boolean ?: return@OnPreferenceChangeListener false
+                if (pin) {
+                    val currentPinned = repository.getPinnedShortcutSubscriptionIds()
+                    val maxCount = AppShortcutManager.getMaxDynamicShortcutCount(context)
+                    if (maxCount > 0 && !currentPinned.contains(subscription.id) && currentPinned.size >= maxCount) {
+                        Toast.makeText(
+                            context,
+                            getString(R.string.detail_settings_appearance_pin_shortcut_limit_toast, maxCount),
+                            Toast.LENGTH_LONG
+                        ).show()
+                        return@OnPreferenceChangeListener false
+                    }
+                }
+                true
+            }
+            pref?.preferenceDataStore = object : PreferenceDataStore() {
+                override fun putBoolean(key: String?, value: Boolean) {
+                    val appContext = context?.applicationContext ?: return
+                    repository.setSubscriptionPinnedToShortcuts(subscription.id, value)
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        AppShortcutManager.refreshDynamicShortcuts(appContext, repository, forceUpdate = true)
+                    }
+                }
+                override fun getBoolean(key: String?, defValue: Boolean): Boolean {
+                    return repository.isSubscriptionPinnedToShortcuts(subscription.id)
+                }
+            }
+            pref?.summaryProvider = Preference.SummaryProvider<SwitchPreferenceCompat> { preference ->
+                if (preference.isChecked) {
+                    getString(R.string.detail_settings_appearance_pin_shortcut_summary_on)
+                } else {
+                    getString(R.string.detail_settings_appearance_pin_shortcut_summary_off)
+                }
+            }
+        }
+
+        private fun loadAddShortcutPref() {
+            val prefId = context?.getString(R.string.detail_settings_appearance_add_shortcut_key) ?: return
+            val pref: Preference? = findPreference(prefId)
+            pref?.isVisible = AppShortcutManager.isPinShortcutSupported(requireContext())
+            pref?.preferenceDataStore = object : PreferenceDataStore() { }
+            pref?.onPreferenceClickListener = OnPreferenceClickListener {
+                val context = context ?: return@OnPreferenceClickListener false
+                AppShortcutManager.requestPinShortcut(context, subscription)
+                true
             }
         }
 
@@ -474,7 +532,7 @@ class DetailSettingsActivity : AppCompatActivity() {
                         iconSetPref.isVisible = false
 
                         // Finally, save (this is last!)
-                        save(subscription.copy(icon = outputUri.toString()))
+                        save(subscription.copy(icon = outputUri.toString()), updateShortcut = true)
                     } catch (e: Exception) {
                         Log.w(TAG, "Saving icon failed", e)
                         requireActivity().runOnUiThread {
@@ -505,12 +563,16 @@ class DetailSettingsActivity : AppCompatActivity() {
             }
         }
 
-        private fun save(newSubscription: Subscription, refresh: Boolean = false) {
+        private fun save(newSubscription: Subscription, refresh: Boolean = false, updateShortcut: Boolean = false) {
             subscription = newSubscription
+            val appContext = requireContext().applicationContext
             lifecycleScope.launch(Dispatchers.IO) {
                 repository.updateSubscription(newSubscription)
                 if (refresh) {
-                    SubscriberServiceManager.refresh(requireContext())
+                    SubscriberServiceManager.refresh(appContext)
+                }
+                if (updateShortcut) {
+                    AppShortcutManager.onSubscriptionUpdated(appContext, newSubscription, repository)
                 }
             }
         }

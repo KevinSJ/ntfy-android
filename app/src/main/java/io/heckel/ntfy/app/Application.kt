@@ -3,9 +3,11 @@ package io.heckel.ntfy.app
 import android.app.Application
 import android.net.ConnectivityManager
 import android.net.Network
+import androidx.appcompat.app.AppCompatDelegate
 import com.google.android.material.color.DynamicColors
 import io.heckel.ntfy.db.Repository
 import io.heckel.ntfy.service.SubscriberServiceManager
+import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,8 +27,12 @@ class Application : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        AppCompatDelegate.setDefaultNightMode(repository.getDarkMode())
         if (repository.getDynamicColorsEnabled()) {
             DynamicColors.applyToActivitiesIfAvailable(this)
+        }
+        ioScope.launch {
+            AppShortcutManager.refreshDynamicShortcuts(this@Application, repository)
         }
         registerNetworkCallback()
     }

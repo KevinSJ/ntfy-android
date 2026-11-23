@@ -168,6 +168,7 @@ class Backuper(val context: Context) {
             }
         }
         AppShortcutManager.refreshDynamicShortcuts(context, repository, forceUpdate = true)
+        io.heckel.ntfy.widget.AppWidgetUpdater.updateAllNow(context)
         Log.d(TAG, "Restoring done")
     }
 

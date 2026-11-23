@@ -573,6 +573,7 @@ class DetailSettingsActivity : AppCompatActivity() {
                 }
                 if (updateShortcut) {
                     AppShortcutManager.onSubscriptionUpdated(appContext, newSubscription, repository)
+                    io.heckel.ntfy.widget.AppWidgetUpdater.updateAllNow(appContext)
                 }
             }
         }

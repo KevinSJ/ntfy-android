@@ -148,4 +148,14 @@
     <!-- Chip colors -->
     <color name="chip_background_color">#2C2C2C</color> <!-- Dark gray background -->
     <color name="chip_background_checked">#4A4A4A</color> <!-- Lighter when selected in dark mode -->
+
+    <!-- App widgets (dark) -->
+    <color name="widget_background">#1B2023</color>
+    <color name="widget_item_background">#262C30</color>
+    <color name="widget_text_primary">#E8EEEC</color>
+    <color name="widget_text_secondary">#A6B3AE</color>
+    <color name="widget_accent">#84D6C2</color>
+    <color name="widget_badge_background">#84D6C2</color>
+    <color name="widget_badge_text">#00382E</color>
+    <color name="widget_icon_tint">#C0CCC8</color>
 </resources>

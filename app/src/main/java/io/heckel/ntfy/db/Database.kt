@@ -598,6 +598,30 @@ interface NotificationDao {
     """)
     suspend fun listAfter(lastId: String, lastSubscriptionId: Long, limit: Int): List<Notification>
 
+    @Query("SELECT * FROM notification WHERE subscriptionId = :subscriptionId AND deleted != 1 ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun listRecentForSubscription(subscriptionId: Long, limit: Int): List<Notification>
+
+    @Query("""
+        SELECT n.* FROM notification AS n
+        INNER JOIN subscription AS s ON n.subscriptionId = s.id
+        WHERE n.deleted != 1 AND s.upAppId IS NULL
+        ORDER BY n.timestamp DESC
+        LIMIT :limit
+    """)
+    suspend fun listRecentAll(limit: Int): List<Notification>
+
+    @Query("""
+        SELECT n.* FROM notification AS n
+        INNER JOIN (
+            SELECT subscriptionId, MAX(timestamp) AS maxTs
+            FROM notification
+            WHERE deleted != 1
+            GROUP BY subscriptionId
+        ) AS latest ON n.subscriptionId = latest.subscriptionId AND n.timestamp = latest.maxTs
+        WHERE n.deleted != 1
+    """)
+    suspend fun listLatestPerSubscription(): List<Notification>
+
     @Query("SELECT * FROM notification WHERE subscriptionId = :subscriptionId AND deleted != 1 ORDER BY timestamp DESC")
     fun listFlow(subscriptionId: Long): Flow<List<Notification>>
 

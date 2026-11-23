@@ -121,6 +121,18 @@ class Repository(private val sharedPrefs: SharedPreferences, private val databas
         return notificationDao.listAfter(lastId, lastSubscriptionId, limit)
     }
 
+    suspend fun getRecentNotifications(subscriptionId: Long, limit: Int): List<Notification> {
+        return notificationDao.listRecentForSubscription(subscriptionId, limit)
+    }
+
+    suspend fun getRecentNotificationsAll(limit: Int): List<Notification> {
+        return notificationDao.listRecentAll(limit)
+    }
+
+    suspend fun getLatestNotificationsBySubscription(): Map<Long, Notification> {
+        return notificationDao.listLatestPerSubscription().associateBy { it.subscriptionId }
+    }
+
     fun getDeletedNotificationsWithAttachments(): List<Notification> {
         return notificationDao.listDeletedWithAttachments()
     }
@@ -601,6 +613,22 @@ class Repository(private val sharedPrefs: SharedPreferences, private val databas
         }
     }
 
+    fun getWidgetSubscriptionId(appWidgetId: Int): Long {
+        return sharedPrefs.getLong("${SHARED_PREFS_WIDGET_SUBSCRIPTION_PREFIX}$appWidgetId", WIDGET_SUBSCRIPTION_ALL)
+    }
+
+    fun setWidgetSubscriptionId(appWidgetId: Int, subscriptionId: Long) {
+        sharedPrefs.edit {
+            putLong("${SHARED_PREFS_WIDGET_SUBSCRIPTION_PREFIX}$appWidgetId", subscriptionId)
+        }
+    }
+
+    fun removeWidgetConfig(appWidgetId: Int) {
+        sharedPrefs.edit {
+            remove("${SHARED_PREFS_WIDGET_SUBSCRIPTION_PREFIX}$appWidgetId")
+        }
+    }
+
     private fun toSubscriptionList(list: List<SubscriptionWithMetadata>): List<Subscription> {
         return list.map { s ->
             Subscription(
@@ -724,6 +752,8 @@ class Repository(private val sharedPrefs: SharedPreferences, private val databas
         const val SHARED_PREFS_CONNECTION_ALERT_SNOOZE_UNTIL_TIME = "ConnectionAlertSnoozeUntilTime" // Timestamp in millis
         const val SHARED_PREFS_LAST_TOPICS = "LastTopics"
         const val SHARED_PREFS_PINNED_SHORTCUT_IDS = "PinnedShortcutIds"
+        const val SHARED_PREFS_WIDGET_SUBSCRIPTION_PREFIX = "WidgetSubscriptionId_"
+        const val WIDGET_SUBSCRIPTION_ALL = -1L
 
         private const val LAST_TOPICS_COUNT = 3
 

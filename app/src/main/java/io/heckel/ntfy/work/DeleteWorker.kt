@@ -47,6 +47,7 @@ class DeleteWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to delete expired notifications", e)
             }
+            io.heckel.ntfy.widget.AppWidgetUpdater.updateAllNow(applicationContext)
             return@withContext Result.success()
         }
     }

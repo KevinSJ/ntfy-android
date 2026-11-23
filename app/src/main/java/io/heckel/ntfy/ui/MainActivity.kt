@@ -237,9 +237,10 @@ class MainActivity : AppCompatActivity(), AddFragment.SubscribeListener, Notific
                 showHideWebSocketBanner(subscriptions)
                 showHideWebSocketReconnectBanner()
 
-                // Keep dynamic app shortcuts synced with the most recently updated topics
+                // Keep dynamic app shortcuts and home screen widgets synced
                 lifecycleScope.launch(Dispatchers.IO) {
                     AppShortcutManager.refreshDynamicShortcuts(this@MainActivity, repository)
+                    io.heckel.ntfy.widget.AppWidgetUpdater.updateAllNow(this@MainActivity)
                 }
             }
         }

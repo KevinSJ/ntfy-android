@@ -10,6 +10,7 @@ import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
 import io.heckel.ntfy.util.decodeBytesMessage
 import io.heckel.ntfy.util.safeLet
+import io.heckel.ntfy.widget.AppWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -57,11 +58,14 @@ class NotificationDispatcher(val context: Context, val repository: Repository) {
         } else if (downloadIcon) {
             DownloadManager.enqueue(context, notification.id, userAction = false, type = DownloadType.ICON)
         }
-        if (subscription.upAppId == null && notification.event == ApiService.EVENT_MESSAGE) {
-            val scope = (context.applicationContext as? Application)?.ioScope ?: CoroutineScope(Dispatchers.IO)
-            scope.launch {
-                AppShortcutManager.refreshDynamicShortcuts(context, repository)
+        if (subscription.upAppId == null) {
+            if (notification.event == ApiService.EVENT_MESSAGE) {
+                val scope = (context.applicationContext as? Application)?.ioScope ?: CoroutineScope(Dispatchers.IO)
+                scope.launch {
+                    AppShortcutManager.refreshDynamicShortcuts(context, repository)
+                }
             }
+            AppWidgetUpdater.updateAll(context)
         }
     }
 

@@ -43,6 +43,7 @@ import io.heckel.ntfy.msg.Poller
 import io.heckel.ntfy.service.SubscriberServiceManager
 import io.heckel.ntfy.util.AppShortcutManager
 import io.heckel.ntfy.util.Log
+import io.heckel.ntfy.widget.AppWidgetUpdater
 import io.heckel.ntfy.util.copyToClipboard
 import io.heckel.ntfy.util.dangerButton
 import io.heckel.ntfy.util.decodeMessage
@@ -588,10 +589,12 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
     override fun onPause() {
         super.onPause()
         Log.d(TAG, "onPause hook: Removing 'notificationId' from all notifications for $subscriptionId")
+        val appContext = applicationContext
         GlobalScope.launch(Dispatchers.IO) {
             // Note: This is here and not in onDestroy/onStop, because we want to clear notifications as early
             // as possible, so that we don't see the "new" bubble in the main list anymore.
             repository.markAllAsRead(subscriptionId)
+            AppWidgetUpdater.updateAllNow(appContext)
         }
         Log.d(TAG, "onPause hook: Marking subscription $subscriptionId as 'not open'")
         repository.detailViewSubscriptionId.set(0) // Mark as closed
@@ -856,6 +859,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
                 val newNotifications = poller.poll(subscription)
                 if (newNotifications.isNotEmpty()) {
                     AppShortcutManager.refreshDynamicShortcuts(this@DetailActivity, repository)
+                    AppWidgetUpdater.updateAllNow(this@DetailActivity)
                 }
                 val toastMessage = if (newNotifications.isEmpty()) {
                     getString(R.string.refresh_message_no_results)
@@ -933,6 +937,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
             .setPositiveButton(R.string.detail_clear_dialog_permanently_delete) { _, _ ->
                 lifecycleScope.launch(Dispatchers.IO) {
                     repository.markAllAsDeleted(subscriptionId)
+                    AppWidgetUpdater.updateAllNow(this@DetailActivity)
                 }
             }
             .setNegativeButton(R.string.detail_clear_dialog_cancel) { _, _ -> /* Do nothing */ }
@@ -978,6 +983,7 @@ class DetailActivity : AppCompatActivity(), NotificationFragment.NotificationSet
                     val subscription = repository.getSubscription(subscriptionId) ?: return@launch
                     repository.removeSubscription(subscription)
                     AppShortcutManager.onSubscriptionRemoved(appContext, subscription.id, repository)
+                    AppWidgetUpdater.updateAllNow(appContext)
                     if (subscriptionBaseUrl == appBaseUrl) {
                         messenger.unsubscribe(subscriptionTopic)
                     }

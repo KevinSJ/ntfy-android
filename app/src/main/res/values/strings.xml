@@ -533,6 +533,24 @@
     <string name="shortcut_disabled_message">This topic is no longer subscribed</string>
     <string name="shortcut_subscription_not_found">This topic is no longer subscribed</string>
 
+    <!-- App widgets -->
+    <string name="widget_notifications_label">Notifications</string>
+    <string name="widget_notifications_description">View recent notifications from all topics or a specific topic</string>
+    <string name="widget_notifications_all_topics">All notifications</string>
+    <string name="widget_notifications_empty">No notifications yet</string>
+    <string name="widget_notifications_topic_removed">Topic no longer subscribed. Long-press to reconfigure.</string>
+    <string name="widget_topics_label">Subscribed topics</string>
+    <string name="widget_topics_description">Quick overview of your subscribed topics and unread counts</string>
+    <string name="widget_topics_empty">No subscribed topics yet</string>
+    <string name="widget_topics_no_messages">No notifications yet</string>
+    <string name="widget_config_title">Configure widget</string>
+    <string name="widget_config_all_topics_summary">Show latest notifications from all subscribed topics</string>
+    <string name="widget_config_specific_topic_header">Or choose a specific topic</string>
+    <string name="widget_refresh_description">Refresh notifications</string>
+    <string name="widget_preview_sample_title_1">Deployment finished</string>
+    <string name="widget_preview_sample_message_1">Production release v2.4 deployed cleanly</string>
+    <string name="widget_preview_sample_message_2">Nightly database backup completed (412 MB)</string>
+
     <!-- User add/edit dialog (UserFragment) -->
     <string name="user_dialog_title_add">Add user</string>
     <string name="user_dialog_title_edit">Edit user</string>

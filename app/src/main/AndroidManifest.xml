@@ -103,6 +103,50 @@
             </intent-filter>
         </activity>
 
+        <!-- Home screen widget configuration activity -->
+        <activity
+                android:name=".widget.NotificationsWidgetConfigureActivity"
+                android:label="@string/widget_config_title"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+
+        <!-- Home screen widget: Notifications Feed (all topics or a specific topic) -->
+        <receiver
+                android:name=".widget.NotificationsWidgetProvider"
+                android:label="@string/widget_notifications_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/widget_notifications_info" />
+        </receiver>
+        <service
+                android:name=".widget.NotificationsWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false" />
+
+        <!-- Home screen widget: Subscribed Topics Overview -->
+        <receiver
+                android:name=".widget.TopicsWidgetProvider"
+                android:label="@string/widget_topics_label"
+                android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                    android:name="android.appwidget.provider"
+                    android:resource="@xml/widget_topics_info" />
+        </receiver>
+        <service
+                android:name=".widget.TopicsWidgetService"
+                android:permission="android.permission.BIND_REMOTEVIEWS"
+                android:exported="false" />
+
         <!-- Hack: Activity used for "view" action button with "clear=true" (to be able to cancel notifications and show a URL) -->
         <activity
                 android:name=".msg.NotificationService$ViewActionWithClearActivity"

@@ -35,6 +35,7 @@ class SubscriptionsViewModel(private val repository: Repository) : ViewModel() {
         }
         repository.removeSubscription(subscription)
         AppShortcutManager.onSubscriptionRemoved(context, subscription.id, repository)
+        io.heckel.ntfy.widget.AppWidgetUpdater.updateAllNow(context)
         if (subscription.icon != null) {
             val resolver = context.applicationContext.contentResolver
             try {

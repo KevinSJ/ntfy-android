@@ -152,4 +152,14 @@
     <!-- Remove black status bar in Action mode: https://stackoverflow.com/a/79456725 -->
     <color name="abc_decor_view_status_guard" tools:override="true">@android:color/transparent</color>
     <color name="abc_decor_view_status_guard_light" tools:override="true">@android:color/transparent</color>
+
+    <!-- App widgets (light) -->
+    <color name="widget_background">#F7FAF8</color>
+    <color name="widget_item_background">#FFFFFF</color>
+    <color name="widget_text_primary">#171D1B</color>
+    <color name="widget_text_secondary">#55615D</color>
+    <color name="widget_accent">#338574</color>
+    <color name="widget_badge_background">#338574</color>
+    <color name="widget_badge_text">#FFFFFF</color>
+    <color name="widget_icon_tint">#3F4946</color>
 </resources>

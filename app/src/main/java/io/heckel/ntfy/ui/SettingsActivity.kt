@@ -160,6 +160,13 @@ class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPrefere
         private lateinit var repository: Repository
         private lateinit var serviceManager: SubscriberServiceManager
         private var autoDownloadSelection = AUTO_DOWNLOAD_SELECTION_NOT_SET
+        private var backupProgressDialog: androidx.appcompat.app.AlertDialog? = null
+
+        override fun onDestroyView() {
+            backupProgressDialog?.dismiss()
+            backupProgressDialog = null
+            super.onDestroyView()
+        }
 
         override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
             setPreferencesFromResource(R.xml.main_preferences, rootKey)
@@ -636,7 +643,7 @@ class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPrefere
             }
 
             // Backup
-            val backuper = Backuper(requireContext())
+            val backuper = Backuper(requireContext().applicationContext)
             val backupPrefId = context?.getString(R.string.settings_backup_restore_backup_key) ?: return
             val backup: ListPreference? = findPreference(backupPrefId)
             var backupSelection = BACKUP_EVERYTHING
@@ -644,24 +651,57 @@ class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPrefere
                 if (uri == null) {
                     return@registerForActivityResult
                 }
-                lifecycleScope.launch(Dispatchers.IO) {
+                val appContext = requireContext().applicationContext
+                val app = appContext as io.heckel.ntfy.app.Application
+                val progressDialogView = layoutInflater.inflate(R.layout.dialog_backup_progress, null)
+                val progressMessage = progressDialogView.findViewById<android.widget.TextView>(R.id.backup_progress_message)
+                progressMessage.text = getString(R.string.settings_backup_restore_backup_in_progress)
+                val progressDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setView(progressDialogView)
+                    .setCancelable(false)
+                    .show()
+                backupProgressDialog = progressDialog
+
+                app.ioScope.launch {
                     try {
+                        val onProgress: (Int) -> Unit = { count ->
+                            activity?.let { act ->
+                                if (!act.isFinishing && !act.isDestroyed) {
+                                    act.runOnUiThread {
+                                        progressMessage.text = act.getString(R.string.settings_backup_restore_backup_in_progress_count, count)
+                                    }
+                                }
+                            }
+                        }
                         when (backupSelection) {
-                            BACKUP_EVERYTHING -> backuper.backup(uri)
-                            BACKUP_EVERYTHING_NO_USERS -> backuper.backup(uri, withUsers = false)
-                            BACKUP_SETTINGS_ONLY -> backuper.backup(uri, withUsers = false, withSubscriptions = false)
+                            BACKUP_EVERYTHING -> backuper.backup(uri, onProgress = onProgress)
+                            BACKUP_EVERYTHING_NO_USERS -> backuper.backup(uri, withUsers = false, onProgress = onProgress)
+                            BACKUP_SETTINGS_ONLY -> backuper.backup(uri, withUsers = false, withSubscriptions = false, onProgress = onProgress)
                         }
                         activity?.let { act ->
-                            act.runOnUiThread {
-                                Toast.makeText(act, getString(R.string.settings_backup_restore_backup_successful), Toast.LENGTH_LONG).show()
+                            if (!act.isFinishing && !act.isDestroyed) {
+                                act.runOnUiThread {
+                                    if (progressDialog.isShowing) progressDialog.dismiss()
+                                    if (backupProgressDialog === progressDialog) backupProgressDialog = null
+                                    Toast.makeText(act, getString(R.string.settings_backup_restore_backup_successful), Toast.LENGTH_LONG).show()
+                                }
                             }
+                        } ?: android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(appContext, appContext.getString(R.string.settings_backup_restore_backup_successful), Toast.LENGTH_LONG).show()
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "Backup failed", e)
+                        val msg = appContext.getString(R.string.settings_backup_restore_backup_failed, e.message)
                         activity?.let { act ->
-                            act.runOnUiThread {
-                                Toast.makeText(act, getString(R.string.settings_backup_restore_backup_failed, e.message), Toast.LENGTH_LONG).show()
+                            if (!act.isFinishing && !act.isDestroyed) {
+                                act.runOnUiThread {
+                                    if (progressDialog.isShowing) progressDialog.dismiss()
+                                    if (backupProgressDialog === progressDialog) backupProgressDialog = null
+                                    Toast.makeText(act, msg, Toast.LENGTH_LONG).show()
+                                }
                             }
+                        } ?: android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(appContext, msg, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
@@ -689,26 +729,58 @@ class SettingsActivity : AppCompatActivity(), PreferenceFragmentCompat.OnPrefere
                 if (uri == null) {
                     return@registerForActivityResult
                 }
-                lifecycleScope.launch(Dispatchers.IO) {
+                val appContext = requireContext().applicationContext
+                val app = appContext as io.heckel.ntfy.app.Application
+                val progressDialogView = layoutInflater.inflate(R.layout.dialog_backup_progress, null)
+                val progressMessage = progressDialogView.findViewById<android.widget.TextView>(R.id.backup_progress_message)
+                progressMessage.text = getString(R.string.settings_backup_restore_restore_in_progress)
+                val progressDialog = MaterialAlertDialogBuilder(requireContext())
+                    .setView(progressDialogView)
+                    .setCancelable(false)
+                    .show()
+                backupProgressDialog = progressDialog
+
+                app.ioScope.launch {
                     try {
                         val currentDarkMode = repository.getDarkMode()
-                        backuper.restore(uri)
-                        activity?.let { act ->
-                            act.runOnUiThread {
-                                Toast.makeText(act, getString(R.string.settings_backup_restore_restore_successful), Toast.LENGTH_LONG).show()
-                                act.recreate()
-                                val newDarkMode = repository.getDarkMode()
-                                if (newDarkMode != currentDarkMode) {
-                                    AppCompatDelegate.setDefaultNightMode(newDarkMode)
+                        backuper.restore(uri) { count ->
+                            activity?.let { act ->
+                                if (!act.isFinishing && !act.isDestroyed) {
+                                    act.runOnUiThread {
+                                        progressMessage.text = act.getString(R.string.settings_backup_restore_restore_in_progress_count, count)
+                                    }
                                 }
                             }
                         }
+                        activity?.let { act ->
+                            if (!act.isFinishing && !act.isDestroyed) {
+                                act.runOnUiThread {
+                                    if (progressDialog.isShowing) progressDialog.dismiss()
+                                    if (backupProgressDialog === progressDialog) backupProgressDialog = null
+                                    Toast.makeText(act, getString(R.string.settings_backup_restore_restore_successful), Toast.LENGTH_LONG).show()
+                                    act.recreate()
+                                    val newDarkMode = repository.getDarkMode()
+                                    if (newDarkMode != currentDarkMode) {
+                                        AppCompatDelegate.setDefaultNightMode(newDarkMode)
+                                    }
+                                }
+                            }
+                        } ?: android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(appContext, appContext.getString(R.string.settings_backup_restore_restore_successful), Toast.LENGTH_LONG).show()
+                        }
                     } catch (e: Exception) {
                         Log.w(TAG, "Restore failed", e)
+                        val msg = appContext.getString(R.string.settings_backup_restore_restore_failed, e.message)
                         activity?.let { act ->
-                            act.runOnUiThread {
-                                Toast.makeText(act, getString(R.string.settings_backup_restore_restore_failed, e.message), Toast.LENGTH_LONG).show()
+                            if (!act.isFinishing && !act.isDestroyed) {
+                                act.runOnUiThread {
+                                    if (progressDialog.isShowing) progressDialog.dismiss()
+                                    if (backupProgressDialog === progressDialog) backupProgressDialog = null
+                                    Toast.makeText(act, msg, Toast.LENGTH_LONG).show()
+                                }
                             }
+                        } ?: android.os.Handler(android.os.Looper.getMainLooper()).post {
+                            Toast.makeText(appContext, msg, Toast.LENGTH_LONG).show()
                         }
                     }
                 }
